@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitops-notif-cntlr
+  namespace: gitops-notif-cntlr
+  labels:
+    app: gitops-notif-cntlr
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitops-notif-cntlr
+  template:
+    metadata:
+      labels:
+        app: gitops-notif-cntlr
+    spec:
+      containers:
+        - name: gitops-notif-cntlr
+          image: ghcr.io/xxx/gitops-notification-controller:latest
+          ports:
+            - containerPort: 5001
+          env:
+            - name: SLACK_NOTIFICATION_CHANNEL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: slack_notification_channel_id
+            - name: SLACK_MONITORING_CHANNEL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: slack_monitoring_channel_id
+            - name: COMMIT_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: commit_prefix
+            - name: ENV_PREFIX_CURL
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: env_prefix_curl
+            - name: SLACK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitops-notif-cntlr-secrets-misc
+                  key: slack_token
+            - name: PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: project_id
+            - name: CLUSTER
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: cluster
+            - name: REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: gitops-notif-cntlr-extra-config
+                  key: region
+          resources:
+              limits:
+                cpu: 350m
+                memory: 250Mi
+              requests:
+                cpu: 70m
+                memory: 65Mi
+          volumeMounts:
+            - name: scripts-volume
+              mountPath: /gitops_storage
+              #defaultMode: 0755
+              readOnly: true
+            - name: sa-volume
+              mountPath: /sa-volume
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+      imagePullSecrets:
+        - name: gh-registry
+      volumes:
+        - name: scripts-volume
+          configMap:
+            name: scripts-gitops-notif-controller

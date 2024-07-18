@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scripts-gitops-notif-controller
+  namespace: gitops-notif-cntlr
+data:
+  check-image-updates.sh: |
+    #! /usr/bin/env bash
+    echo "Entering bash script"
+    IMAGE_TAG=$(echo "$1" | cut -d':' -f2-)
+    echo $IMAGE_TAG
+    DEPLOYMENT_STATUS="OK"
+    set -x
+    echo "Setting up kubeconf..."
+    KUBE_STATUS=$(kubectl cluster-info | grep "is running at")
+    if [[ "$KUBE_STATUS" != *"is running at"* ]]; then
+      source /gitops_storage/setup-kubectl.sh
+    fi
+    sleep 140
+    PODS_CONTAINING_IMAGE=$(kubectl get pods --all-namespaces -o jsonpath="{..image}" | tr -s '[[:space:]]' '\n' | sort | uniq -c | grep $IMAGE_TAG || true)
+    if [[ "$PODS_CONTAINING_IMAGE" != *$IMAGE_TAG* ]]; then DEPLOYMENT_STATUS="KO" ; fi
+    if [[ "$DEPLOYMENT_STATUS" == *OK* ]]; then
+        PODS_IN_FAILURE=$(kubectl get -A pods --field-selector status.phase!=Succeeded --no-headers | grep -v Running | grep -E "(CrashLoopBackOff|Error|ImagePullBackOff|CreateContainerConfigError|Waiting)")
+        if [[ ! -z "$PODS_IN_FAILURE" ]] ; then
+            OLDIFS=$IFS
+            IFS=$'\n'
+            for LINE in $PODS_IN_FAILURE; do
+                POD_NS=$(echo $LINE | awk '{ print $1 }')
+                POD_NAME=$(echo $LINE | awk '{ print $2 }')
+                POD_DESCRIPTION=$(kubectl -n $POD_NS describe pod $POD_NAME | grep $IMAGE_TAG)
+                if [[ "$POD_DESCRIPTION" == *$IMAGE_TAG* ]]; then DEPLOYMENT_STATUS="KO" ; fi
+            done
+            IFS=$OLDIFS
+        fi
+        PODS_NOT_READY=$(kubectl get pods --all-namespaces -o json | jq -r '.items[] | select((.status.conditions[]? | select(.type=="Ready" and .status=="False")) and (.metadata.ownerReferences[]? | select(.kind!="Job"))) | .metadata.namespace + " " + .metadata.name')
+        if [[ ! -z "$PODS_NOT_READY" ]] ; then
+            OLDIFS=$IFS
+            IFS=$'\n'
+            for LINE in $PODS_NOT_READY; do
+                POD_NS=$(echo $LINE | awk '{ print $1 }')
+                POD_NAME=$(echo $LINE | awk '{ print $2 }')
+                POD_DESCRIPTION=$(kubectl -n $POD_NS describe pod $POD_NAME | grep $IMAGE_TAG)
+                if [[ "$POD_DESCRIPTION" == *$IMAGE_TAG* ]]; then DEPLOYMENT_STATUS="KO" ; fi
+            done
+            IFS=$OLDIFS
+        fi
+    fi
+    set +x
+    if [[ "$DEPLOYMENT_STATUS" == *OK* ]]; then
+      echo "Sending notif to notifs channel"
+      echo curl --data-urlencode "text=${ENV_PREFIX_CURL} New image deployed and running: ${IMAGE_TAG}." -d "channel=${SLACK_NOTIFICATION_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+      curl --data-urlencode "text=${ENV_PREFIX_CURL} New image deployed and running: ${IMAGE_TAG}." -d "channel=${SLACK_NOTIFICATION_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+    fi
+    if [[ "$DEPLOYMENT_STATUS" == *KO* ]]; then
+      echo "Sending notif to monitoring channel"
+      echo curl --data-urlencode "text=${ENV_PREFIX_CURL} There has been a problem when deploying this new image, please check: ${IMAGE_TAG}." -d "channel=${SLACK_MONITORING_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+      curl --data-urlencode "text=${ENV_PREFIX_CURL} There has been a problem when deploying this new image, please check: ${IMAGE_TAG}." -d "channel=${SLACK_MONITORING_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+      echo "Sending notif to notifs channel"
+      echo curl --data-urlencode "text=${ENV_PREFIX_CURL} There has been a problem when deploying this new image, check the logs on GCP and contact infra team: ${IMAGE_TAG}." -d "channel=${SLACK_NOTIFICATION_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+      curl --data-urlencode "text=${ENV_PREFIX_CURL} There has been a problem when deploying this new image, check the logs on GCP and contact infra team: ${IMAGE_TAG}." -d "channel=${SLACK_NOTIFICATION_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+    fi
+  setup-kubectl.sh: |
+    #! /usr/bin/env bash
+    echo "your prefered way of setting up kubectl here"
+  healthchecks-forward-notif.sh: |
+    #! /usr/bin/env bash
+    notif_content=$1
+    echo "Send notif"
+    echo curl --data-urlencode "text=${notif_content}" -d "channel=${SLACK_MONITORING_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage
+    curl --data-urlencode "text=${notif_content}" -d "channel=${SLACK_MONITORING_CHANNEL_ID}" -H "Authorization: Bearer ${SLACK_TOKEN}" -X POST https://slack.com/api/chat.postMessage

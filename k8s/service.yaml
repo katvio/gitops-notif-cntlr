@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-gitops-notif-cntlr
+spec:
+  selector:
+    app: gitops-notif-cntlr
+  ports:
+    - protocol: TCP
+      port: 80
+      name: http
+      targetPort: 5001
